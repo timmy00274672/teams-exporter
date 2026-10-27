@@ -1,0 +1,4 @@
+#!/bin/sh
+# Resolve the launcher directory; works independently of the caller's cwd.
+TEAMS_EXPORT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec node "$TEAMS_EXPORT_ROOT/src/cli.js" "$@"
