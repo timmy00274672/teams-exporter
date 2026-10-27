@@ -1,10 +1,16 @@
 {
   "name": "teams-text-exporter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "type": "module",
-  "engines": {"node": ">=20"},
-  "bin": {"teams-dump": "./src/cli.js"},
-  "scripts": {"test": "node --test", "start": "node src/cli.js"},
-  "dependencies": {"playwright": "^1.56.0"}
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "start": "node cli/teams-dump.cjs",
+    "skills:install": "node scripts/install-skills.cjs"
+  },
+  "bin": {
+    "teams-dump": "./cli/teams-dump.cjs"
+  },
+  "dependencies": {
+    "playwright": "^1.56.0"
+  }
 }

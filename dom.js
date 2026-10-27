@@ -1,5 +1,7 @@
+/* Rendered-DOM readers for the local Teams build. */
+(function(root){
 // Runs only against the rendered DOM. Never reads application stores or network traffic.
-export function readMessages() {
+function readMessages() {
   const visible = e => !!e && e.getClientRects().length > 0;
   return [...document.querySelectorAll('[id^="message-body-"]')].filter(visible).map((body, index) => {
     const id = body.getAttribute('data-mid') || body.id.slice('message-body-'.length);
@@ -21,11 +23,12 @@ export function readMessages() {
     return {id: id || null, author: author?.innerText?.trim() || null, rawTime: time?.getAttribute('datetime') || time?.getAttribute('aria-label') || time?.textContent || null,
       time: time?.getAttribute('datetime') || null,
       text: [content?.innerText?.trim() || '', ...images.map(x=>'[圖片：'+x+']')].filter(Boolean).join('\n') || body.innerText.trim(),
+      images: root.TeamsChatImages ? root.TeamsChatImages.candidates(body).map(root.TeamsChatImages.describe) : [],
       links, parent, quote: quote?.getAttribute('aria-label') || quote?.innerText || null, index,
       truncated: [...body.querySelectorAll('button')].some(b=>visible(b) && /^(see more|read more|show more|顯示更多|查看更多|閱讀更多|展开|展開)$/i.test((b.innerText || b.getAttribute('aria-label') || '').trim()))};
   });
 }
-export function readRail() {
+function readRail() {
   const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
   const tree = [...document.querySelectorAll('[role="tree"]')].find(visible);
   if (!tree) return {items: [], folders: [], top: null, bottom: null, loading: true};
@@ -42,7 +45,7 @@ export function readRail() {
     moreValues: [...tree.querySelectorAll('[role="treeitem"][data-fui-tree-item-value$="load-next-page"]')].filter(visible).map(e=>e.getAttribute('data-fui-tree-item-value')),
     moreLabels: [...tree.querySelectorAll('button,[role="treeitem"]')].filter(e=>visible(e) && /^(show more|see more|load more|show all|顯示更多|查看更多|載入更多|显示更多|加载更多|See all chats|所有聊天)$/i.test(e.innerText.trim())).map(e=>e.innerText.trim())};
 }
-export function readPane() {
+function readPane() {
   const visible = e => !!e && e.getClientRects().length > 0;
   const root = document.querySelector('[data-tid="app-layout-area--main"]') || document.body;
   const viewport = [...root.querySelectorAll('[data-tid="message-pane-list-viewport"]')].find(visible);
@@ -55,3 +58,6 @@ export function readPane() {
   const replies = [...root.querySelectorAll('button')].filter(e=>visible(e) && /(?:\d+ replies|View thread|Open thread|\d+ 則回覆|查看討論串|\d+ 条回复)/i.test(e.getAttribute('aria-label') || e.innerText || '')).length;
   return {title, headerId: header?.id || null, viewport: !!viewport, top: viewport?.scrollTop ?? null, bottom: viewport ? viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop : null, busy, startMarker, empty, replies};
 }
+
+root.TeamsChatDOM={readMessages,readRail,readPane};
+})(globalThis);
