@@ -1,9 +1,9 @@
 {
   "name": "teams-text-exporter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
-    "test": "node --test test/*.test.cjs",
+    "test": "node --test --test-concurrency=1 test/*.test.cjs",
     "start": "node cli/teams-dump.cjs",
     "skills:install": "node scripts/install-skills.cjs"
   },

@@ -50,3 +50,10 @@ test('單檔分頁擷取接收新影格並裁切；錯誤分頁的 cropTo 拒絕
   });assert.equal(r.width,80);assert.equal(r.height,50);assert.deepEqual(r.pixel,[0,255,0,255]);assert.equal(r.hide,1);assert.equal(r.restore,1);assert.equal(r.wrong,'wrong-tab');assert.equal(r.stopped,true);assert.equal(r.ready,false);assert.equal(r.marker,false);
  }finally{await browser.close();}
 });
+
+test('已解碼的預載圖片即使在可視區外仍保存，避免時段停止前漏圖',async()=>{
+ const {browser,page}=await setup();try{
+  await page.locator('#image-1').evaluate(e=>e.style.marginTop='800px');await page.locator('[data-tid=message-pane-list-viewport]').evaluate(e=>e.scrollTop=0);
+  const r=await page.evaluate(async()=>{const s=new TeamsChatUtils.Scanner({delay:1,captureProvider:new TeamsChatImages.TabCapture()});const j=await s.start({scope:'current',mode:'visible',from:'2026-10-26T00:00:00Z',to:'2026-10-28T00:00:00Z',captureImages:true});return {image:j.conversations[0].messages[0].images[0],top:document.querySelector('[data-tid=message-pane-list-viewport]').scrollTop};});assert.equal(r.image.status,'saved');assert.equal(r.image.method,'rendered-canvas');assert.equal(r.top,0);
+ }finally{await browser.close();}
+});

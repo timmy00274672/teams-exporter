@@ -15,14 +15,14 @@ teams-dump --login
 --data <目錄> 本機資料根目錄（預設 repo/.local/cli）
 --profile <目錄> 專用 Chrome 設定檔，勿使用日常 Chrome 設定檔
 --only <名稱> 僅掃描唯一同名聊天（用於驗證）
---delay <毫秒> 預設 900，最低 200
+--full-scan    強制開啟全部聊天，略過清單時間篩選\n--delay <毫秒> 指定後使用固定等待；預設依頁面載入狀態等待，最低 200
 --max-steps <次數> 預設 2000
 --login-timeout <秒> 預設 600
 時間預設台北，包含開始、不含結束。可能將聊天標為已讀。
 退出碼：0 完成或已接受；2 部分完成；1 失敗；130 中斷。
 `;
 function parse(args){
- const {values:v,positionals:p}=parseArgs({args,allowPositionals:true,options:{from:{type:'string'},to:{type:'string'},resume:{type:'string'},data:{type:'string'},out:{type:'string'},profile:{type:'string'},only:{type:'string'},account:{type:'string'},background:{type:'boolean'},json:{type:'boolean'},help:{type:'boolean'},login:{type:'boolean'},worker:{type:'string'},delay:{type:'string'},'max-steps':{type:'string'},'login-timeout':{type:'string'}}});
+ const {values:v,positionals:p}=parseArgs({args,allowPositionals:true,options:{from:{type:'string'},to:{type:'string'},resume:{type:'string'},data:{type:'string'},out:{type:'string'},profile:{type:'string'},only:{type:'string'},account:{type:'string'},background:{type:'boolean'},json:{type:'boolean'},help:{type:'boolean'},login:{type:'boolean'},worker:{type:'string'},'full-scan':{type:'boolean'},delay:{type:'string'},'max-steps':{type:'string'},'login-timeout':{type:'string'}}});
  const command=v.worker?'worker':v.login?'login':v.resume?'resume':p[0]||'scan',id=v.worker||v.resume||p[1];
  if(!['scan','update','resume','status','stop','export','login','worker'].includes(command)||p.length>2)throw Error('未知指令；請用 --help');
  if(['resume','stop'].includes(command)&&!id)throw Error('請提供工作編號');
@@ -31,7 +31,7 @@ function parse(args){
  if(command==='update'&&v.from)throw Error('update 起點由已保存進度決定，不接受 --from');
  if(p.length===2&&!['resume','status','stop'].includes(command))throw Error('不接受多餘參數');
  const positive=(x,d,min)=>{const n=x===undefined?d:Number(x);if(!Number.isInteger(n)||n<min)throw Error('等待時間／次數無效');return n;};
- return {...v,command,id,delay:positive(v.delay,900,200),maxSteps:positive(v['max-steps'],2000,1),loginTimeout:positive(v['login-timeout'],600,1)*1000};
+ return {...v,command,id,fullScan:!!v['full-scan'],explicitDelay:v.delay!==undefined,adaptive:v.delay===undefined,deltaTransport:true,delay:positive(v.delay,900,200),maxSteps:positive(v['max-steps'],2000,1),loginTimeout:positive(v['login-timeout'],600,1)*1000};
 }
 async function range(options){const source=await fs.readFile(path.join(__dirname,'../shared-utils.js'),'utf8');const ctx=vm.createContext({TeamsChatDOM:{},Date});vm.runInContext(source,ctx);return JSON.parse(JSON.stringify(ctx.TeamsChatUtils.makeRange(options)));}
 function output(value,json){process.stdout.write(json?JSON.stringify(value)+'\n':JSON.stringify(value,null,2)+'\n');}
@@ -39,10 +39,10 @@ async function main(args=process.argv.slice(2)){
  process.umask(0o077);const opt=parse(args);if(opt.help){process.stdout.write(HELP);return 0;}
  const repo=new Repository(opt.data||process.env.TEAMS_DUMP_DATA||path.join(__dirname,'../.local/cli'));
  if(['status','stop'].includes(opt.command)){
-  const id=opt.id||await repo.latest();if(!id){output({status:'empty',message:'尚無工作'},opt.json);return 0;}const job=await repo.job(id);
+  const id=opt.id||await repo.latest();if(!id){output({status:'empty',message:'尚無工作'},opt.json);return 0;}const job=await repo.progress(id);
   const worker=await read(path.join(repo.jobDir(id),'worker.json'),{});const pid=job.pid||worker.pid;const live=pid&&alive(pid)&&['queued','running','waiting-login'].includes(job.status);if(!live&&['queued','running','waiting-login'].includes(job.status)){job.status='interrupted';job.error='程序已結束，可用 resume 續抓';}
   if(opt.command==='stop'){await atomic(path.join(repo.jobDir(id),'control.json'),{stop:true});output({id,status:live?'stop-requested':job.status},opt.json);return 0;}
-  const report=await read(path.join(repo.jobDir(id),'report.json'),null);output({...summary(job),running:!!live,paths:{directory:repo.jobDir(id),changes:path.join(repo.jobDir(id),'changes.txt'),report:path.join(repo.jobDir(id),'report.json')},changes:report?.changes},opt.json);return 0;
+  const report=await read(path.join(repo.jobDir(id),'report.json'),null);output({...job,running:!!live,paths:{directory:repo.jobDir(id),changes:path.join(repo.jobDir(id),'changes.txt'),report:path.join(repo.jobDir(id),'report.json')},changes:report?.changes},opt.json);return 0;
  }
  if(opt.command==='export'){
   const last=await repo.latest(),account=opt.account||(last?(await repo.job(last)).account:null);if(!account)throw Error('請提供 --account 或先完成一次掃描');
@@ -55,6 +55,7 @@ async function main(args=process.argv.slice(2)){
  let job;
  if(opt.command==='resume'){
   job=await repo.job(opt.id);const worker=await read(path.join(repo.jobDir(job.id),'worker.json'),{});if((job.pid&&alive(job.pid))||(worker.pid&&alive(worker.pid)))throw Error('此工作仍在執行');await fs.rm(path.join(repo.jobDir(job.id),'control.json'),{force:true});
+  job.options={...job.options,adaptive:job.options.adaptive??job.options.delay===900,deltaTransport:true};if(opt.explicitDelay){job.options.delay=opt.delay;job.options.adaptive=false;}if(opt.fullScan)job.options.fullScan=true;job.status='queued';job.pid=null;await repo.save(job);
  }else{
   const r=await range(opt);job={version:1,id:crypto.randomUUID(),created:Date.now(),status:'queued',stage:'等待啟動',range:r,account:null,conversations:[],warnings:[],options:{...opt,from:new Date(r.from).toISOString(),to:new Date(r.to).toISOString()}};
   // Reuse the original dedicated profile when present; never open everyday Chrome credentials.

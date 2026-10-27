@@ -57,11 +57,26 @@ function prepare(input={}){
  return {a,mode,scope,initial,range:makeRange(input)};
 }
 class Scanner{
- constructor({save=async()=>{},delay=900,maxSteps=2000,onUpdate=()=>{},loginTimeout=600000,captureProvider=null,mediaStore=null}={}){Object.assign(this,{save,delay,maxSteps,onUpdate,loginTimeout,captureProvider});this.mediaStore=mediaStore||(root.TeamsChatImages?new root.TeamsChatImages.MediaStore():null);this.job=null;this.running=false;this.cancelled=false;this.sequence=0;}
+ constructor({save=async()=>{},delay=900,maxSteps=2000,onUpdate=()=>{},loginTimeout=600000,captureProvider=null,mediaStore=null,adaptive=false}={}){Object.assign(this,{save,delay,maxSteps,onUpdate,loginTimeout,captureProvider,adaptive});this.performance={waitMs:0,waitCount:0,navigationResets:0,openAttempts:0};this.mediaStore=mediaStore||(root.TeamsChatImages?new root.TeamsChatImages.MediaStore():null);this.job=null;this.running=false;this.cancelled=false;this.sequence=0;}
  check(){if(this.cancelled)throw stopped();}
- async wait(){this.check();await new Promise(r=>setTimeout(r,this.delay));this.check();}
+ async wait(){
+  this.check();const start=Date.now();
+  if(!this.adaptive||this.job?.status==='waiting-login'){await new Promise(r=>setTimeout(r,this.delay));this.check();}
+  else{
+   let signature='',stableSince=Date.now(),ready=false;
+   while(Date.now()-start<10000){
+    this.check();const pane=readPane(),rail=readRail(),railOnly=this.waitSurface==='rail',busy=railOnly?rail.loading:pane.busy;
+    const next=JSON.stringify(railOnly?[rail.top,rail.bottom,rail.items.map(x=>x.key)]:[pane.headerId,pane.top,pane.bottom,[...document.querySelectorAll('[id^="message-body-"]')].map(e=>e.id)]);
+    if(next!==signature||busy){signature=next;stableSince=Date.now();}
+    if(!busy&&Date.now()-stableSince>=300&&Date.now()-start>=(this.waitSurface==='messages'?650:300)){ready=true;break;}
+    await new Promise(r=>setTimeout(r,100));
+   }
+   if(!ready)throw Error('畫面載入逾時，已保留進度');
+  }
+  this.performance.waitMs+=Date.now()-start;this.performance.waitCount++;
+ }
  summary(){if(!this.job)return null;const j=this.job;return {id:j.id,status:j.status,stage:j.stage,range:j.range,scope:j.scope,mode:j.mode,account:j.account,conversations:j.conversations.map(c=>({key:c.key,name:c.name,status:c.status,count:this.selected(c).length,warnings:c.warnings,error:c.error})),count:j.conversations.reduce((n,c)=>n+this.selected(c).length,0),captureImages:j.captureImages,imageCount:j.conversations.reduce((n,c)=>n+this.selected(c).reduce((sum,m)=>sum+(m.images||[]).filter(i=>i.status==='saved').length,0),0),warnings:j.warnings,error:j.error,updated:j.updated};}
- async persist(){if(!this.job)return;this.job.updated=Date.now();this.onUpdate(this.summary());await this.save(this.job);}
+ async persist(){if(!this.job)return;this.job.updated=Date.now();this.job.metrics={...this.job.metrics,browser:{...this.performance}};this.onUpdate(this.summary());await this.save(this.job);}
  selected(c){const range=c.scanRange||this.job.range;return c.messages.filter(m=>m.timestamp===null || this.job.mode==='history'||(m.timestamp>=range.from&&m.timestamp<range.to));}
  async auth(){
   const end=Date.now()+this.loginTimeout;
@@ -87,23 +102,23 @@ class Scanner{
   this.job=structuredClone(job);this.sequence=this.job.conversations.reduce((max,c)=>c.messages.reduce((n,m)=>m.id?n:Math.max(n,Number(m.key.split(':').at(-1))||0),max),this.sequence);if(options.captureImages&&!this.job.captureImages){this.job.captureImages=true;for(const c of this.job.conversations)if(c.status==='complete')c.status='pending';}await this.execute();return this.job;
  }
  stop(){this.cancelled=true;}
- async rail(){
+ async rail({reset=false}={}){this.waitSurface='rail';
   const buttons=matches(null,'[data-tid="app-bar-wrapper"] button');
   const chat=buttons.find(e=>/^(Chat|聊天)$/i.test(buttonText(e)));
-  if(chat)chat.click();
+  if(chat&&!tree())chat.click();
   for(let i=0;i<40&&!tree();i++)await this.wait();
   if(!tree())throw Error('找不到聊天清單，可能尚未載入或 Teams 已改版');
   const filters=matches(null,'[role="toolbar"] [role="checkbox"][aria-checked="true"], [role="toolbar"] [aria-pressed="true"]');
   for(const f of filters)if(/^(Unread|Chats|Meeting chats|未讀|聊天|會議聊天|未读|会议聊天)$/i.test(buttonText(f))){f.click();await this.wait();}
   const search=matches(null,'input').find(e=>/^(Filter by name|依名稱篩選|按名称筛选)$/i.test(e.getAttribute('placeholder')||''));
   if(search?.value)throw Error('請先清除聊天清單的名稱篩選再掃描');
-  tree().scrollTop=0;await this.wait();
+  if(reset){tree().scrollTop=0;await this.wait();}
  }
  async discover(){
-  await this.rail();let previous='',stable=0;const expanded=new Set();
+  await this.rail({reset:true});let previous='',stable=0;const expanded=new Set();
   for(let n=0;n<this.maxSteps;n++){
    await this.auth();const r=readRail();if(r.filtered?.length)throw Error('清單仍有啟用中的篩選');
-   for(const c of r.items)if(!this.job.conversations.some(x=>x.key===c.key))this.job.conversations.push(this.newConversation(c));
+   for(const c of r.items){const old=this.job.conversations.find(x=>x.key===c.key);if(old)Object.assign(old,{name:c.name,latest:c.latest,observedAt:c.observedAt});else this.job.conversations.push(this.newConversation(c));}
    this.job.stage=`列舉聊天：${this.job.conversations.length} 個`;await this.persist();
    const folder=r.folders.find(v=>!expanded.has(v));
    if(folder){expanded.add(folder);expand(folder);await this.wait();if(item(folder)?.getAttribute('aria-expanded')==='false')throw Error('無法展開聊天資料夾');continue;}
@@ -111,22 +126,22 @@ class Scanner{
    if(r.moreLabels?.length){const e=matches(null,'[role="tree"] button,[role="tree"] [role="treeitem"]').find(e=>e.innerText.trim()===r.moreLabels[0]);if(!e)throw Error('無法展開更多聊天');e.click();await this.wait();continue;}
    const signature=JSON.stringify([r.items.map(x=>x.key),r.top,r.bottom]);
    stable=!r.loading&&r.bottom!==null&&r.bottom<=2&&signature===previous?stable+1:0;
-   if(stable>=4){this.job.discovery={status:this.job.conversations.length?'complete':'partial',boundary:'observed-stable-bottom'};return;}
+   if(stable>=4){this.job.discovery={status:this.job.conversations.length?'complete':'partial',boundary:'observed-stable-bottom'};tree().scrollTop=0;return;}
    previous=signature;tree().scrollTop+=tree().clientHeight*.7;await this.wait();
   }this.job.discovery={status:'partial',warning:'列舉達到捲動上限，可能有未發現聊天'};
  }
  async open(c){
-  await this.rail();let previous='',stable=0;
+  await this.rail();let previous='',stable=0,reset=false;this.performance.openAttempts++;
   for(let n=0;n<this.maxSteps;n++){
    await this.auth();const r=readRail(),found=r.items.find(x=>x.key===c.key);
-   if(found){item(found.value).click();for(let i=0;i<40;i++){await this.wait();const p=readPane();if(p.headerId==='chat-header-'+c.key&&p.viewport)return;}throw Error('聊天訊息未載入');}
+   if(found){this.waitSurface='messages';item(found.value).click();for(let i=0;i<40;i++){await this.wait();const p=readPane();if(p.headerId==='chat-header-'+c.key&&p.viewport&&!p.busy){c.opened=true;return;}}throw Error('聊天訊息未載入');}
    if(r.folders[0]){expand(r.folders[0]);await this.wait();continue;}
    if(r.moreValues?.length){const e=item(r.moreValues[0]);e.scrollIntoView({block:'nearest'});e.click();await this.wait();continue;}
-   const signature=JSON.stringify([r.items.map(x=>x.key),r.top,r.bottom]);stable=r.bottom<=2&&signature===previous?stable+1:0;if(stable>=4)break;
+   const signature=JSON.stringify([r.items.map(x=>x.key),r.top,r.bottom]);stable=r.bottom<=2&&signature===previous?stable+1:0;if(stable>=2){if(reset)break;reset=true;this.performance.navigationResets++;tree().scrollTop=0;previous='';stable=0;await this.wait();continue;}
    previous=signature;tree().scrollTop+=tree().clientHeight*.7;await this.wait();
   }throw Error('此聊天已不在可讀取清單中');
  }
- async capture(c){
+ async capture(c){this.waitSurface='messages';
   await this.auth();
   if(readPane().headerId!=='chat-header-'+c.key)throw Error('聊天已切換；停止以免混入其他聊天');
   for(let i=0;i<50;i++){
@@ -157,7 +172,7 @@ class Scanner{
    const elements=root.TeamsChatImages.candidates(body);
    for(const image of m.images||[]){
     this.check();if(image.status==='saved')continue;
-    const e=elements[image.index];if(!e)continue;const r=e.getBoundingClientRect(),view=this.viewport().getBoundingClientRect();if(r.bottom<=view.top||r.top>=view.bottom)continue;
+    const e=elements[image.index];if(!e)continue;const r=e.getBoundingClientRect(),view=this.viewport().getBoundingClientRect();if((r.bottom<=view.top||r.top>=view.bottom)&&(!e.complete||!e.naturalWidth))continue;
     this.job.stage=`保存圖片：${c.name} / ${m.id||'未識別訊息'} / ${image.index+1}`;
     const check=()=>{this.check();if(readPane().headerId!=='chat-header-'+c.key)throw Error('聊天已切換；停止以免混入其他聊天');};
     try{check();const {blob,method}=await root.TeamsChatImages.capture(e,this.captureProvider,check);check();const file=await root.TeamsChatImages.filename(c.key,m.key,image.index);await this.mediaStore.put(this.job.id,file,blob);Object.assign(image,root.TeamsChatImages.describe(e,image.index),{file,status:'saved',method,bytes:blob.size,error:null});}
@@ -183,7 +198,7 @@ class Scanner{
     const raw=readMessages(),pane=readPane();
     if(!pane.busy&&raw.some(m=>m.id===checkpoint.anchorId)){bottom=true;c.traversal.upper='checkpoint-confirmed-bottom';c.traversal.resume='anchor-found';break;}
     const next=JSON.stringify([raw.map(m=>m.id||m.text),pane.top]);unchanged=!pane.busy&&next===sig?unchanged+1:0;if(unchanged>=4)break;sig=next;
-    this.viewport().scrollTop-=this.viewport().clientHeight*.65;await this.wait();
+    this.viewport().scrollTop-=this.viewport().clientHeight*(this.adaptive?0.45:0.65);await this.wait();
    }
    if(!bottom)c.traversal.resume='anchor-unavailable-rescan';
   }
@@ -205,7 +220,7 @@ class Scanner{
    const signature=JSON.stringify([raw.map(m=>m.id||m.text),pane.top]);stable=!pane.busy&&pane.top!==null&&pane.top<=2&&signature===previous?stable+1:0;
    if(stable>=4){c.traversal.lower='observed-stable-top';c.warnings.push('頂部已穩定，但沒有明確歷史起始標記，無法確認更早內容完整載入');break;}
    if(bottom&&!pane.busy&&ordered&&dated.length){const anchor=dated.find(m=>m.id);if(anchor){c.cursor={phase:'up',anchorId:anchor.id,anchorTime:anchor.time,upperConfirmed:true};await this.persist();}}
-   previous=signature;this.viewport().scrollTop-=this.viewport().clientHeight*.65;await this.wait();
+   previous=signature;this.viewport().scrollTop-=this.viewport().clientHeight*(this.adaptive?0.45:0.65);await this.wait();
   }
   if(this.job.captureImages&&this.selected(c).some(m=>(m.images||[]).some(image=>image.status!=='saved')))c.warnings.push('部分圖片未保存，TXT 已保留連結與原因；可啟用圖片擷取後續抓');
   if(!bottom)c.warnings.push('未確認最新訊息的底部邊界');
@@ -221,6 +236,7 @@ class Scanner{
    if(this.job.scope==='all')await this.discover();else this.job.discovery={status:'complete',scope:'current'};
    for(let i=0;i<this.job.conversations.length;i++){
     this.check();const c=this.job.conversations[i];if(c.status==='complete')continue;
+    if(this.beforeConversation){const proceed=await this.beforeConversation(c);if(proceed===false||c.status==='skipped-out-of-range'||c.status==='complete'){await this.persist();continue;}}
     this.job.stage=`${i+1}/${this.job.conversations.length}：${c.name}`;
     c.status='running';c.error=null;c.warnings=[];await this.persist();
     for(let attempt=0;attempt<3;attempt++){
@@ -231,7 +247,7 @@ class Scanner{
      }catch(e){c.status='failed';c.error=e.message;await this.persist();if(e.stopped||e.captureUnavailable||/帳號|已切換|原本的聊天/.test(e.message))throw e;if(attempt<2)await this.wait();}
     }await this.persist();
    }
-   this.job.status=this.job.discovery.status==='complete'&&this.job.conversations.length&&this.job.conversations.every(c=>c.status==='complete')?'complete':'partial';this.job.stage='掃描結束';await this.persist();
+   this.job.status=this.job.discovery.status==='complete'&&this.job.conversations.length&&this.job.conversations.every(c=>['complete','skipped-out-of-range'].includes(c.status))?'complete':'partial';this.job.stage='掃描結束';await this.persist();
   }catch(e){this.job.status=e.stopped?'interrupted':'failed';this.job.error=e.message;try{await this.persist();}catch{};}
   finally{this.running=false;this.onUpdate(this.summary());}
  }

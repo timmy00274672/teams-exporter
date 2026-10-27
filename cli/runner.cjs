@@ -1,18 +1,22 @@
 'use strict';
 const fs=require('node:fs/promises'),path=require('node:path');
 const {chromium}=require('playwright');
-const {read,lock,planRanges,inRange,alive}=require('./store.cjs');
+const {read,lock,planRanges,planConversation,applyPacket,inRange,alive}=require('./store.cjs');
 const {runBrowser}=require('./browser.cjs');
 const root=path.resolve(__dirname,'..');
 const sources=['images.js','dom.js','shared-utils.js','export-formats.js'];
 async function run(repo,id,options,{launch=(profile,settings)=>chromium.launchPersistentContext(profile,settings),lockDirectory=path.join(root,'.local/run-lock')}={}){
  let job=await repo.job(id),release;try{release=await lock(lockDirectory);}catch(e){if(job.pid&&alive(job.pid))throw e;job.status='failed';job.error=e.message;job.pid=null;await repo.save(job);await repo.render(job,{},require('./text.cjs').format);return job;}
  const originalOptions=job.options,originalCreated=job.created;let releaseProfile,context,timer,baseline;
- let stopping=false,saveChain=Promise.resolve();
+ let stopping=false,saveChain=Promise.resolve(),library;const performance={started:Date.now(),persistenceMs:0,receivedBytes:0,packets:0};
  const stop=()=>{stopping=true;};process.on('SIGINT',stop);process.on('SIGTERM',stop);
- const save=async state=>{
-  job={...state,options:originalOptions,pid:process.pid,created:originalCreated};
-  await repo.save(job);if(job.account){if(!baseline)baseline=await repo.baseline(job,await repo.library(job.account));await repo.ingest(job);}return {stop:stopping};
+ const save=async packet=>{
+  const start=Date.now(),changedKeys=packet.kind==='delta-v1'?packet.conversations.map(c=>c.meta.key):null;
+  performance.receivedBytes+=Buffer.byteLength(JSON.stringify(packet));performance.packets++;
+  job={...applyPacket(job,packet),options:originalOptions,pid:process.pid,created:originalCreated};
+  job.metrics={...job.metrics,host:{...performance,elapsedMs:Date.now()-performance.started,...repo.io}};
+  await repo.save(job,{changedKeys});if(job.account){if(!baseline)baseline=await repo.baseline(job,await repo.library(job.account));await repo.ingest(job,{changedKeys});}
+  performance.persistenceMs+=Date.now()-start;return {stop:stopping};
  };
  const format=require('./text.cjs').format;
  try{
@@ -23,13 +27,13 @@ async function run(repo,id,options,{launch=(profile,settings)=>chromium.launchPe
   const page=context.pages()[0]||await context.newPage();
   const trusted=source=>{if(source&&source.frame!==page.mainFrame())return false;const u=new URL(page.url());return u.protocol==='https:'&&['teams.microsoft.com','teams.cloud.microsoft','teams.live.com'].includes(u.hostname);};
   await page.exposeBinding('teamsLocalSave',async(_source,state)=>{if(!trusted(_source))throw Error('非 Teams 頁面');saveChain=saveChain.then(()=>save(state));return saveChain;});
-  await page.exposeBinding('teamsLocalPlan',async(_source,{key,range,incremental})=>{
-   if(!trusted(_source))throw Error('非 Teams 頁面');const lib=await repo.verifyMedia(await repo.library(job.account)),prior=lib.conversations[key];const ranges=planRanges(prior,range,incremental);
-   const messages=structuredClone((prior?.messages||[]).filter(m=>ranges.some(r=>inRange(m,r))));
-   for(const m of messages)for(const i of m.images||[])if(i.status==='saved'&&!(await repo.getImage(i.file))){i.status='failed';i.error='本機圖片快取遺失';}
-   return {ranges,messages};
+  await page.exposeBinding('teamsLocalPlan',async(_source,{key,conversation,range,incremental})=>{
+   if(!trusted(_source))throw Error('非 Teams 頁面');library||=await repo.library(job.account);const prior=library.conversations[key];
+   const plan=planConversation(prior,conversation||{key},range,incremental,{fullScan:options.fullScan,only:!!options.only});
+   const messages=structuredClone((prior?.messages||[]).filter(m=>plan.ranges.some(r=>inRange(m,r))));
+   return {ranges:plan.ranges,plan,messages};
   });
-  await page.exposeBinding('teamsLocalImage',async(_source,{op,file,data})=>{if(!trusted(_source))throw Error('非 Teams 頁面');if(op==='put'){if(typeof data!=='string'||data.length>150000000)throw Error('圖片過大');await repo.putImage(file,Buffer.from(data,'base64'));return true;}if(op!=='get')throw Error('無效圖片操作');return (await repo.getImage(file))?.toString('base64')||null;});
+  await page.exposeBinding('teamsLocalImage',async(_source,{op,file,data})=>{if(!trusted(_source))throw Error('非 Teams 頁面');if(op==='put'){if(typeof data!=='string'||data.length>150000000)throw Error('圖片過大');await repo.putImage(file,Buffer.from(data,'base64'));return true;}if(op==='has')return repo.hasImage(file);if(op!=='get')throw Error('無效圖片操作');return (await repo.getImage(file))?.toString('base64')||null;});
   await page.exposeBinding('teamsLocalScreenshot',async(_source,r)=>{
    if(!trusted(_source))throw Error('非 Teams 頁面');const size=page.viewportSize();if(!r||![r.x,r.y,r.width,r.height].every(Number.isFinite)||r.width<=0||r.height<=0||r.x<0||r.y<0||r.x+r.width>size.width+1||r.y+r.height>size.height+1)throw Error('圖片裁切區域無效');
    const bytes=await page.screenshot({type:'png',clip:{x:r.x,y:r.y,width:r.width,height:r.height}});if(!trusted(_source))throw Error('擷取期間分頁已離開 Teams');return bytes.toString('base64');
@@ -45,7 +49,7 @@ async function run(repo,id,options,{launch=(profile,settings)=>chromium.launchPe
     const identity=await page.evaluate(async()=>{try{return await TeamsChatUtils.identify();}catch{return null;}});
     if(!identity)throw Error('等待 Teams 登入');
     if(job.account&&job.account!==identity)throw Error('登入帳號與工作不同');
-    job.account=identity;baseline=await repo.baseline(job,await repo.verifyMedia(await repo.library(identity)));
+    job.account=identity;if(!library){library=await repo.verifyMedia(await repo.library(identity));baseline=await repo.baseline(job,library);if(job.version===2)await repo.ingest(job);}
     if(options.login){job.status='complete';job.stage='登入狀態已保存';await repo.save(job);break;}
     const saved=job.version===2?structuredClone(job):null;
     job=await page.evaluate(async({code,options,saved,host})=>{const run=(0,eval)('('+code+')');return run(options,saved,null,host);},{code:runBrowser.toString(),options,saved,host:{id,created:job.created}});
@@ -62,7 +66,7 @@ async function run(repo,id,options,{launch=(profile,settings)=>chromium.launchPe
  }catch(e){job.status=stopping?'interrupted':'failed';job.error=e.message;}
  finally{
   clearInterval(timer);await saveChain.catch(()=>{});
-  try{job.pid=null;job.updated=Date.now();job.options=originalOptions;await repo.save(job);
+  try{job.pid=null;job.updated=Date.now();job.options=originalOptions;job.metrics={...job.metrics,host:{...performance,elapsedMs:Date.now()-performance.started,...repo.io}};await repo.save(job);
    if(job.account){baseline||=await repo.baseline(job,await repo.library(job.account));await repo.ingest(job);}
    const report=await repo.render(job,baseline||{},format);if(report.status!==job.status){job.status=report.status;await repo.save(job);}
   }catch(e){job.status='failed';job.error='保存輸出失敗：'+e.message;await repo.save(job).catch(()=>{});}

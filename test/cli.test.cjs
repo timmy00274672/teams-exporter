@@ -77,7 +77,7 @@ test('主機工作流程可停止、固定時段續抓，並回報登入等待�
  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'teams-runner-')),browser=await chromium.launch({channel:'chrome',headless:true});
  const {run}=require('../cli/runner.cjs');
  try{
-  const repo=new Repository(temp);const opts={command:'update',from:'2026-10-26T00:00:00Z',to:'2026-10-28T00:00:00Z',delay:200,maxSteps:20,loginTimeout:1000,profile:path.join(temp,'profile')};
+  const repo=new Repository(temp);const opts={deltaTransport:true,adaptive:false,command:'update',from:'2026-10-26T00:00:00Z',to:'2026-10-28T00:00:00Z',delay:200,maxSteps:20,loginTimeout:1000,profile:path.join(temp,'profile')};
   const makeJob=id=>({version:1,id,created:Date.now(),status:'queued',range:{from:Date.parse(opts.from),to:Date.parse(opts.to)},account:null,conversations:[],options:opts,warnings:[]});
   const launch=async()=>{const context=await browser.newContext({viewport:{width:1440,height:1000}});await context.route('https://teams.cloud.microsoft/**',r=>r.fulfill({body:shell(domMessage('old','2026-10-25T00:00Z','界線')+domMessage('a','2026-10-27T00:00Z','訊息')),contentType:'text/html'}));return context;};
   await repo.save(makeJob('stop-test'));const promise=run(repo,'stop-test',opts,{launch,lockDirectory:path.join(temp,'worker-lock')});

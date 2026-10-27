@@ -42,7 +42,7 @@ function readRail() {
     const title = e.querySelector('[id^="title-chat-list-item_"]');
     const id = title?.id.slice('title-chat-list-item_'.length) || value?.split('|').at(-1);
     const name = title?.innerText?.trim();
-    return {key: id, name, value, type:'chat', latest: e.querySelector('time[datetime]')?.getAttribute('datetime') || null};
+    return {key: id, name, value, type:'chat', observedAt:Date.now(),latest: e.querySelector('time[datetime]')?.getAttribute('datetime') || null};
   }).filter(e=>e.key && e.name);
   const folders = [...tree.querySelectorAll('[role="treeitem"][data-conversation-folder="true"][aria-expanded="false"]')].filter(visible).map(e=>e.getAttribute('data-fui-tree-item-value'));
   return {items, folders, top: tree.scrollTop, bottom: tree.scrollHeight - tree.clientHeight - tree.scrollTop, loading: !!tree.querySelector('[role="progressbar"], [aria-busy="true"]'),
@@ -56,7 +56,8 @@ function readPane() {
   const viewport = [...root.querySelectorAll('[data-tid="message-pane-list-viewport"]')].find(visible);
   const header = document.querySelector('[data-tid="chat-header"]') || document.querySelector('[id^="chat-header-"]');
   const title = document.querySelector('[data-tid="chat-title"]')?.innerText?.trim();
-  const busy = [...root.querySelectorAll('[role="progressbar"], [aria-busy="true"]')].some(visible);
+  const mediaLoading=e=>!!e.closest('[id^="message-body-"],[id^="attachments-"]')&&(/(?:video|image|audio|media|影片|圖片|图像|视频).*(?:load|載入|加载)|(?:load|載入|加载).*(?:video|image|audio|media|影片|圖片|图像|视频)/i.test(e.getAttribute('aria-label')||'')||!!e.closest('video,audio,[data-tid*="video"],[data-tid*="image"],[data-tid*="media"]'));
+  const busy = [...root.querySelectorAll('[role="progressbar"], [aria-busy="true"]')].some(e=>visible(e)&&!mediaLoading(e));
   const text = root.innerText || '';
   const startMarker = /(?:This is the beginning of (?:your |the )?(?:chat|conversation)|This is the start of (?:your |the )?(?:chat|conversation)|這是.*(?:聊天|對話)的開頭|这是.*(?:聊天|对话)的开头)/i.test(text);
   const empty = /(?:No messages (?:yet|here)|There are no messages|Start a conversation|尚無訊息|還沒有訊息|暂无消息|尚無聊天記錄)/i.test(text);
