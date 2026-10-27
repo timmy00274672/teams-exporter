@@ -19,11 +19,16 @@ function readMessages() {
     const images = [...(content || body).querySelectorAll('img')].map(e => e.alt || e.getAttribute('aria-label') || '圖片');
     // A quoted reply is part of the body; preserve the quote text and DOM target, if exposed.
     const quote = content?.querySelector('[data-track-module-name="messageQuotedReply"], [data-tid*="quoted"], [data-reply-to-id], blockquote');
+    const renderedText=content?.innerText?.trim() ?? body.innerText.trim();
+    const quotedText=quote?.innerText?.trim()||null;
+    const bodySeparated=!quote||!!(quotedText&&renderedText.includes(quotedText));
+    const bodyText=quote&&bodySeparated?renderedText.replace(quotedText,'').trim():renderedText;
     const parent = body.getAttribute('data-reply-to-id') || quote?.getAttribute('data-reply-to-id') || quote?.getAttribute('data-message-id') || null;
     return {id: id || null, author: author?.innerText?.trim() || null, rawTime: time?.getAttribute('datetime') || time?.getAttribute('aria-label') || time?.textContent || null,
       time: time?.getAttribute('datetime') || null,
       text: [content?.innerText?.trim() || '', ...images.map(x=>'[圖片：'+x+']')].filter(Boolean).join('\n') || body.innerText.trim(),
-      images: root.TeamsChatImages ? root.TeamsChatImages.candidates(body).map(root.TeamsChatImages.describe) : [],
+      bodyText,bodySeparated,quotedText,
+      images: root.TeamsChatImages ? root.TeamsChatImages.candidates(body).map((e,i)=>({...root.TeamsChatImages.describe(e,i),context:quote?.contains(e)?'quote':'body'})) : [],
       links, parent, quote: quote?.getAttribute('aria-label') || quote?.innerText || null, index,
       truncated: [...body.querySelectorAll('button')].some(b=>visible(b) && /^(see more|read more|show more|顯示更多|查看更多|閱讀更多|展开|展開)$/i.test((b.innerText || b.getAttribute('aria-label') || '').trim()))};
   });

@@ -5,6 +5,7 @@ const pngBlob=canvas=>new Promise((resolve,reject)=>{try{canvas.toBlob(b=>b?reso
 const frame=()=>new Promise(resolve=>{const timer=setTimeout(resolve,500);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));});
 const unavailable=message=>Object.assign(Error(message),{captureUnavailable:true});
 function candidates(body){return [...(body.querySelector('[data-message-content]')||body).querySelectorAll('img')].filter(e=>{
+ if(/\/profilepicture(?:v\d+)?(?:\/|\?|$)/i.test(e.currentSrc||e.src||'')||e.closest('[data-tid*="avatar"],[data-tid*="Avatar"],.fui-Avatar'))return false;
  const r=e.getBoundingClientRect();return !e.closest('[itemtype*="Emoji"],[data-tid*="emoji"],.emojione,[data-is-emoji="true"]')&&(r.width>=32&&r.height>=32||e.naturalWidth>=64&&e.naturalHeight>=64);
 });}
 function describe(e,index){

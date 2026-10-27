@@ -96,3 +96,21 @@ test('中斷後從已保存的訊息錨點接續，不再重新處理最新區�
   assert.equal(r.firstStatus,'interrupted');assert.equal(r.anchor,'16');assert.equal(r.captures[0],'16');assert.equal(r.second.conversations[0].traversal.upper,'checkpoint-confirmed-bottom');assert.equal(r.second.status,'complete');assert.equal(new Set(r.second.conversations[0].messages.map(m=>m.key)).size,r.second.conversations[0].messages.length);
  }finally{await browser.close();}
 });
+
+test('TXT 明確區分發送者、引用與本機圖片檔，缺圖不暗示存在檔案',async()=>{
+ const {browser,page}=await setup();try{
+  await page.setContent(shell(''));await inject(page);
+  const text=await page.evaluate(()=>TeamsChatFormats.format({status:'partial',mode:'changes',range:{from:0,to:1000},warnings:[],discovery:{status:'complete'},conversations:[{key:'c',name:'測試群組',status:'partial',warnings:[],messages:[{id:'1',key:'id:1',timestamp:1,sender:'現在的發送者',text:'引用者\n先前內容\n我補上圖\n[圖片：影像]',bodyText:'我補上圖',bodySeparated:true,quotedText:'引用者\n先前內容',quote:'引用者\n先前內容',images:[{index:0,alt:'影像',context:'body',status:'saved',file:'images/fixture_1.png',url:'blob:https://teams.cloud.microsoft/session'}]},{id:'2',key:'id:2',timestamp:2,sender:'另一人',text:'只有圖片\n[圖片：圖片]',images:[]},{id:'3',key:'id:3',timestamp:3,sender:'第三人',text:'下載失敗',images:[{alt:'圖',status:'failed',file:'images/not-saved.png',error:'擷取失敗'}]}]}]},'txt'));
+  assert.match(text,/發送者：現在的發送者/);assert.match(text,/\[引用原文開始\]\n引用者\n先前內容\n\[引用原文結束\]/);assert.match(text,/\[本文開始\]\n我補上圖\n\[本文結束\]/);
+  assert.match(text,/\[本機圖片附件 1 開始\]\n所屬訊息 ID：1/);assert.match(text,/圖片檔案：images\/fixture_1.png/);assert.match(text,/以本 TXT 所在資料夾為基準開啟/);assert.match(text,/暫時來源網址（離開原分頁後可能失效）/);
+  assert.match(text,/頁面圖片提示（未對應到本機檔案）：圖片/);assert.match(text,/沒有可讀取的本機圖片檔/);assert.doesNotMatch(text,/圖片檔案：images\/not-saved/);
+  assert.equal((text.match(/\[訊息開始\]/g)||[]).length,3);assert.equal((text.match(/\[訊息結束\]/g)||[]).length,3);
+ }finally{await browser.close();}
+});
+
+test('DOM 引用與正文分開保留，引用頭像不當作聊天圖片',async()=>{
+ const {browser,page}=await setup();try{
+  await page.setContent(shell(msg('1','2026-10-27T00:00Z','<blockquote data-tid="quoted-message">Ryan<br>10/27/2026 11:18 AM<br>DCG Development<img src="https://teams.cloud.microsoft/api/users/profilepicturev2/person" width="64" height="64"></blockquote><p>我也看到這頁</p><img id="real-image" src="data:image/png;base64,AA" width="80" height="60" alt="截圖">')));await inject(page);
+  const m=await page.evaluate(()=>TeamsChatDOM.readMessages()[0]);assert.equal(m.bodySeparated,true);assert.match(m.quotedText,/Ryan/);assert.equal(m.bodyText,'我也看到這頁');assert.equal(m.images.length,1);assert.equal(m.images[0].context,'body');
+ }finally{await browser.close();}
+});

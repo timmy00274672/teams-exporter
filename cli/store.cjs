@@ -40,7 +40,7 @@ class Repository{
  async getImage(file){try{return await fs.readFile(this.image(file));}catch(e){if(e.code==='ENOENT')return null;throw e;}}
  async render(job,baseline,formatText){
   const changes=diff(job.conversations,baseline,job.id),dir=this.jobDir(job.id);const byChat=new Map();
-  for(const change of changes){if(!byChat.has(change.conversationKey))byChat.set(change.conversationKey,{key:change.conversationKey,name:change.conversationName,status:'partial',warnings:[],messages:[]});byChat.get(change.conversationKey).messages.push({...change.message,text:`[${change.types.join(', ')}]\n${change.message.text}`});}
+  for(const change of changes){if(!byChat.has(change.conversationKey))byChat.set(change.conversationKey,{key:change.conversationKey,name:change.conversationName,status:'partial',warnings:[],messages:[]});byChat.get(change.conversationKey).messages.push({...change.message,changeTypes:change.types});}
   const view={...job,mode:'changes',conversations:[...byChat.values()]},mediaErrors=[];
   for(const c of view.conversations)for(const m of c.messages)for(const image of m.images||[]){if(image.status!=='saved'||!image.file)continue;const bytes=await this.getImage(image.file);if(bytes)await atomic(path.join(dir,image.file),bytes);else{image.status='failed';image.error='本機圖片快取遺失，請續抓補存';mediaErrors.push({file:image.file,error:image.error});}}
   const report=summary(job);report.mediaErrors=mediaErrors;if(mediaErrors.length)report.status='partial';report.changes={total:changes.length,added:changes.filter(c=>c.types.includes('added')).length,updated:changes.filter(c=>c.types.includes('updated')).length,imagesSaved:changes.filter(c=>c.types.includes('images-saved')).length,uncertain:changes.filter(c=>c.types.includes('uncertain')).length};

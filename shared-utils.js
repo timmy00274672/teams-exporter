@@ -138,7 +138,7 @@ class Scanner{
   for(const m of raw){
    const time=knownTime(m.time)?Date.parse(m.time):null;
    const identity=m.id?'id:'+m.id:'uncertain:'+this.job.id+':'+(++this.sequence);
-   const converted={seenInRun:this.job.id,id:m.id,key:identity,sender:m.author||'作者不明',authorMissing:!m.author,timestamp:time,rawTime:m.rawTime,text:m.text,attachments:m.links||[],parent:m.parent,quote:m.quote,uncertainIdentity:!m.id};
+   const converted={seenInRun:this.job.id,id:m.id,key:identity,sender:m.author||'作者不明',authorMissing:!m.author,timestamp:time,rawTime:m.rawTime,bodyText:m.bodyText,bodySeparated:m.bodySeparated,quotedText:m.quotedText,text:m.text,attachments:m.links||[],parent:m.parent,quote:m.quote,uncertainIdentity:!m.id};
    const old=c.messages.find(x=>x.key===identity);
    converted.images=(m.images||[]).map(image=>{const prior=old?.images?.find(x=>!image.identityUncertain&&x.index===image.index&&x.identity===image.identity);return prior?{...prior,...image}:{...image,status:'link-only'};});
    if(old)Object.assign(old,converted);else c.messages.push(converted);
