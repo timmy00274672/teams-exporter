@@ -48,7 +48,7 @@ async function main(args=process.argv.slice(2)){
   const last=await repo.latest(),account=opt.account||(last?(await repo.job(last)).account:null);if(!account)throw Error('請提供 --account 或先完成一次掃描');
   const lib=await repo.library(account),out=path.resolve(opt.out||path.join(repo.root,'full',new Date().toISOString().replace(/[:.]/g,'-')));await fs.mkdir(out,{recursive:true,mode:0o700});if((await fs.readdir(out)).length)throw Error('匯出目錄必須為空');
   const conversations=Object.values(lib.conversations).map(c=>({...c,status:'partial',warnings:[],messages:structuredClone(c.messages)}));
-  for(const c of conversations)for(const m of c.messages)for(const image of m.images||[]){if(image.status==='saved'){const bytes=await repo.getImage(image.file);if(bytes)await atomic(path.join(out,image.file),bytes);else{image.status='failed';image.error='本機圖片快取遺失';}}}
+  for(const c of conversations)for(const m of c.messages)for(const image of m.images||[]){if(image.status==='saved'){const method=await repo.exportImage(image.file,out);if(!method){image.status='failed';image.error='本機圖片快取遺失';}}}
   const job={status:'partial',mode:'history',account,range:{from:0,to:Date.now()},warnings:['累積內容並非全部歷史的完整備份'],discovery:{status:'partial'},conversations};await atomic(path.join(out,'all.txt'),require('./text.cjs').format(job));await atomic(path.join(out,'all.json'),job);output({directory:out,messages:conversations.reduce((n,c)=>n+c.messages.length,0)},opt.json);return 0;
  }
  if(opt.command==='worker'){const j=await repo.job(opt.id);const result=await require('./runner.cjs').run(repo,opt.id,j.options);return exitCode(result);}

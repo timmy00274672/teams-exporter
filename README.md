@@ -54,14 +54,14 @@ teams-dump --help
 ```text
 .local/cli/
   accounts/                  累積訊息、已覆蓋區段及未完成請求
-  images/                    共用 PNG 快取
+  images/                    共用 PNG 快取（工作附件以 hard link 共用）
   jobs/<工作編號>/
     state.json               原始範圍與可續抓進度
     baseline.json            本次開始前的比對基準
     changes.txt              本次新增／更新，含圖片檔名與連結
     changes.json             added / updated / images-saved / uncertain
     report.json              掃描狀態、各聊天覆蓋與缺漏
-    images/                  本次變動引用的圖片，可整包搬移
+    images/                  本次變動引用的圖片，可整包搬移；同磁碟使用 hard link
 ```
 
 沒有變動時，文字明確記錄「本次沒有新增或更新內容」。訊息或圖片快取遺失時會補抓；保存失敗保留頁面可取得的連結與原因。圖片以頁面已載入的像素存成 PNG；跨來源限制時裁切專用分頁，不下載媒體 API、不做 OCR。截圖不保證原始解析度，動畫保留當下影格。文件附件只保留名稱及連結。
@@ -80,3 +80,9 @@ teams-dump --help
 - 登入設定檔、本機訊息、圖片與測試匯出均受 `.gitignore` 排除。
 
 DOM 讀取及圖片處理借鑑 [TeamsChatDownloader](https://github.com/rahulmasal/TeamsChatDownloader) 的[本機 DOM 改版](https://github.com/timmy00274672/TeamsChatDownloader/tree/8508fe8)（基準 `8508fe8`），保留 MIT 授權。此 repo 的命令列入口共用同一掃描引擎，不需 Chrome 外掛。
+
+## 圖片硬碟空間
+
+工作結果與完整匯出的圖片優先使用 hard link，與快取共用同一份檔案資料，保留原本的 `images/` 路徑；跨磁碟或檔案系統不支援時退回複製。圖片更新使用原子替換，保留舊工作看到的舊版本；刪除其中一個連結也不會讓其餘路徑失效。相同檔名但內容不同的版本不會合併。
+
+舊副本可用 `node scripts/dedupe-images.cjs` 預覽，再加 `--apply` 合併。範圍限此 repo 的 `.local/cli*` 圖片快取、工作／完整匯出附件及 `exports/`，依 SHA-256 比對內容，只在同一磁碟合併，不掃描 Chrome 登入設定檔。此操作與掃描共用工作鎖。
